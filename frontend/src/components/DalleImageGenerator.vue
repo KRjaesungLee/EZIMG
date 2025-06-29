@@ -15,6 +15,7 @@
             :placeholder="$t('prompt_input') + '...'"
             class="prompt-input"
             rows="4"
+            :disabled="isGenerating"
           ></textarea>
           <div class="input-footer">
             <span class="char-count" style="display: none;">{{ prompt.length }}/1000</span>
@@ -32,6 +33,16 @@
               <button @click="clearAllTags" class="clear-all-btn">{{ $t('clear_tags') }}</button>
             </div>
           </SectionBox>
+
+          <!-- 제외할 요소 -->
+          <div class="negative-prompt">
+            <textarea
+              v-model="negativePrompt"
+              placeholder="제외할 요소를 입력하세요 (선택사항)..."
+              class="negative-prompt-input"
+              :disabled="isGenerating"
+            ></textarea>
+          </div>
         </div>
 
         <!-- 태그 시스템 -->
@@ -135,12 +146,43 @@
           </div>
         </SectionBox>
         
+        <div class="generation-options">
+          <div class="options-row">
+            <div class="style-selector">
+              <label>스타일 선택:</label>
+              <select v-model="selectedStyle" :disabled="isGenerating">
+                <option value="none">기본 스타일 (HelloworldXL만 사용)</option>
+                <!-- <option value="Korean-doll-likeness">한국 인물 스타일 + HelloworldXL</option>
+                <option value="Japanese-doll-likeness">일본 인물 스타일 + HelloworldXL</option>
+                <option value="Taiwan-doll-likeness">대만 인물 스타일 + HelloworldXL</option> -->
+                <option value="surreal_landscape">초현실적 풍경 + HelloworldXL</option>
+                <option value="LCMTurboMix_Euler_A_fix">LCM 터보 + HelloworldXL (빠른 생성)</option>
+                <option value="zhibi-sdxl">귀여운 동물 스타일 + HelloworldXL</option>
+              </select>
+            </div>
+
+            <div class="mode-toggles">
+              <div class="toggle-option">
+                <label>빠른 생성 모드:</label>
+                <label class="switch">
+                  <input 
+                    type="checkbox" 
+                    v-model="useFastMode"
+                    :disabled="isGenerating"
+                  >
+                  <span class="slider round"></span>
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <button 
           @click="generateImage" 
-          :disabled="isLoading || !prompt.trim()"
+          :disabled="isGenerating || !prompt.trim()"
           class="generate-btn"
         >
-          <span v-if="!isLoading" class="btn-content">
+          <span v-if="!isGenerating" class="btn-content">
             <span class="btn-icon">✨</span>
             {{ $t('generate_image') }}
           </span>
@@ -159,7 +201,7 @@
         </div>
       </div>
 
-      <div v-if="isLoading" class="loading-section">
+      <div v-if="isGenerating" class="loading-section">
         <div class="loading-card">
           <div class="loading-animation">
             <div class="loading-circle"></div>
@@ -175,6 +217,17 @@
         <div class="result-header">
           <h3>🎉 {{ $t('generate_image') }}</h3>
           <p>아래 이미지를 확인하고 다운로드하세요</p>
+          <div v-if="generationSettings" class="generation-info">
+            <p>생성 설정:</p>
+            <ul>
+              <li>모델: {{ generationSettings.model }}</li>
+              <li>사용된 LoRA: {{ generationSettings.loras.join(' + ') }}</li>
+              <li>스텝 수: {{ generationSettings.steps }}</li>
+              <li>가이던스 스케일: {{ generationSettings.guidance_scale }}</li>
+              <li>스케줄러: {{ generationSettings.scheduler }}</li>
+              <li>해상도: {{ generationSettings.size }}</li>
+            </ul>
+          </div>
         </div>
         
         <div class="image-container">
@@ -204,11 +257,26 @@ import axios from 'axios'
 import { useI18n } from 'vue-i18n'
 import SectionBox from './common/SectionBox.vue'
 
+interface GenerationSettings {
+  style: string;
+  model: string;
+  loras: string[];
+  steps: number;
+  guidance_scale: number;
+  scheduler: string;
+  size: string;
+}
+
 const prompt = ref('')
 const imageUrl = ref('')
-const isLoading = ref(false)
+const isGenerating = ref(false)
 const error = ref('')
 const selectedTags = ref<string[]>([])
+const selectedStyle = ref('')
+const useFastMode = ref(false)
+const negativePrompt = ref('')
+const savedImagePath = ref('')
+const generationSettings = ref<GenerationSettings | null>(null)
 
 // 태그 데이터를 i18n에서 가져오기
 const { t, tm } = useI18n()
@@ -277,29 +345,46 @@ const updatePrompt = () => {
 const generateImage = async () => {
   if (!prompt.value.trim()) return
   
-  isLoading.value = true
+  isGenerating.value = true
   error.value = ''
   imageUrl.value = ''
+  generationSettings.value = null
   
   try {
-    const response = await axios.post('http://localhost:8000/generate-image', {
-      prompt: prompt.value
+    const formData = new FormData()
+    formData.append('prompt', prompt.value)
+    formData.append('negative_prompt', negativePrompt.value)
+    formData.append('style', selectedStyle.value || 'none')
+    formData.append('fast_mode', String(useFastMode.value))
+    formData.append('num_inference_steps', '20')
+    formData.append('guidance_scale', '7.5')
+    formData.append('width', '512')
+    formData.append('height', '512')
+    
+    const response = await axios.post('http://localhost:8000/generate', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data'
+      }
     })
     
-    imageUrl.value = response.data.image_url
+    if (response.data.image) {
+      imageUrl.value = `data:image/png;base64,${response.data.image}`
+      savedImagePath.value = `http://localhost:8000${response.data.file_path}`
+      generationSettings.value = response.data.settings
+    }
   } catch (err: any) {
     error.value = err.response?.data?.detail || '이미지 생성 중 오류가 발생했습니다.'
     console.error('Error generating image:', err)
   } finally {
-    isLoading.value = false
+    isGenerating.value = false
   }
 }
 
 const downloadImage = async () => {
-  if (!imageUrl.value) return
+  if (!savedImagePath.value) return
   
   try {
-    const response = await axios.get(imageUrl.value, { responseType: 'blob' })
+    const response = await axios.get(savedImagePath.value, { responseType: 'blob' })
     const url = window.URL.createObjectURL(response.data)
     const link = document.createElement('a')
     link.href = url
@@ -761,6 +846,121 @@ const generateNewImage = () => {
   box-shadow: 0 6px 20px rgba(72, 187, 120, 0.3);
 }
 
+.generation-options {
+  margin-top: 20px;
+}
+
+.options-row {
+  display: flex;
+  gap: 20px;
+  margin-bottom: 15px;
+}
+
+.style-selector, .mode-toggles {
+  flex: 1;
+}
+
+.style-selector select {
+  width: 100%;
+  padding: 8px;
+  border-radius: 4px;
+  border: 1px solid #ddd;
+}
+
+.toggle-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* 토글 스위치 스타일 */
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 60px;
+  height: 34px;
+}
+
+.switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: #ccc;
+  transition: .4s;
+}
+
+.slider:before {
+  position: absolute;
+  content: "";
+  height: 26px;
+  width: 26px;
+  left: 4px;
+  bottom: 4px;
+  background-color: white;
+  transition: .4s;
+}
+
+input:checked + .slider {
+  background-color: #2196F3;
+}
+
+input:checked + .slider:before {
+  transform: translateX(26px);
+}
+
+.slider.round {
+  border-radius: 34px;
+}
+
+.slider.round:before {
+  border-radius: 50%;
+}
+
+.negative-prompt {
+  margin-top: 15px;
+}
+
+.negative-prompt-input {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  min-height: 60px;
+}
+
+.generation-info {
+  margin-top: 15px;
+  padding: 15px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+}
+
+.generation-info p {
+  margin: 0 0 10px 0;
+  font-weight: 600;
+}
+
+.generation-info ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.generation-info li {
+  margin: 5px 0;
+  font-size: 0.9em;
+  color: rgba(255, 255, 255, 0.8);
+}
+
 @media (max-width: 768px) {
   .card {
     padding: 25px;
@@ -800,6 +1000,11 @@ const generateNewImage = () => {
 
   .tags-section {
     padding: 20px;
+  }
+
+  .options-row {
+    flex-direction: column;
+    gap: 15px;
   }
 }
 

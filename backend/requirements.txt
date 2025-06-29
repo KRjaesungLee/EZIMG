@@ -1,5 +1,14 @@
-fastapi==0.115.14
-uvicorn==0.35.0
-openai==1.93.0
-python-dotenv==1.1.1
-python-multipart==0.0.9 
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.2.0+cpu
+torchvision==0.17.0+cpu
+diffusers==0.24.0
+transformers==4.35.2
+accelerate==0.24.1
+safetensors==0.4.0
+python-dotenv==1.0.0
+fastapi==0.104.1
+uvicorn==0.24.0
+python-multipart==0.0.6
+Pillow==10.1.0
+huggingface-hub==0.19.4
+onnxruntime==1.16.3 
